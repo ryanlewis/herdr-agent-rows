@@ -770,6 +770,65 @@ func TestSessionsKeepSeparateState(t *testing.T) {
 	}
 }
 
+// A sweep removes other sessions' state dirs that have been idle for 30
+// days, at most once a day. Anything it doesn't recognise as one is kept.
+func TestIdleSessionsPruned(t *testing.T) {
+	sb := newSandbox(t)
+	old := time.Now().Add(-31 * 24 * time.Hour)
+	// mkSession makes a state dir under base whose files, and the dir itself,
+	// were last touched at mtime.
+	mkSession := func(base, name string, mtime time.Time, files ...string) string {
+		dir := filepath.Join(base, name)
+		os.MkdirAll(dir, 0o700)
+		for _, f := range files {
+			os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600)
+			os.Chtimes(filepath.Join(dir, f), mtime, mtime)
+		}
+		os.Chtimes(dir, mtime, mtime)
+		return dir
+	}
+	idle := mkSession(sb.base, "session-00000000000000aa", old, "state.json", ".last-sweep", ".lock")
+	recent := mkSession(sb.base, "session-00000000000000bb", old, "state.json")
+	os.WriteFile(filepath.Join(recent, ".last-sweep"), nil, 0o600) // touched now
+	os.Chtimes(recent, old, old)
+	var kept []string
+	for _, name := range []string{"session-old", "session-00000000000000FF", "session-00000000000000aaa", "other"} {
+		kept = append(kept, mkSession(sb.base, name, old, "state.json"))
+	}
+	nested := mkSession(sb.base, "session-00000000000000cc", old, "state.json")
+	mkSession(nested, "sub", old, "keep")
+	os.Chtimes(nested, old, old)
+	target := mkSession(sb.dir, "elsewhere", old, "state.json")
+	link := filepath.Join(sb.base, "session-00000000000000dd")
+	os.Symlink(target, link)
+	kept = append(kept, recent, nested, target, link)
+	kept = append(kept, sb.stateDir)
+
+	w := &world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}
+	sb.run(w, runOpts{dry: true})
+	if _, err := os.Lstat(idle); err != nil {
+		t.Errorf("dry run pruned: %v", err)
+	}
+	r := sb.run(w, runOpts{})
+	if _, err := os.Lstat(idle); err == nil {
+		t.Errorf("idle session dir kept")
+	}
+	for _, p := range kept {
+		if _, err := os.Lstat(p); err != nil {
+			t.Errorf("%s removed: %v", filepath.Base(p), err)
+		}
+	}
+	if r.state.Pruned == 0 {
+		t.Errorf("prune time not recorded")
+	}
+
+	idle2 := mkSession(sb.base, "session-00000000000000ee", old, "state.json")
+	sb.run(w, runOpts{})
+	if _, err := os.Lstat(idle2); err != nil {
+		t.Errorf("pruned again within a day: %v", err)
+	}
+}
+
 func TestRefusesOutsideHerdr(t *testing.T) {
 	sb := newSandbox(t)
 	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}, runOpts{noStateDir: true})

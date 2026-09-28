@@ -33,6 +33,7 @@ const workerIndent = "\u2800\u2800"
 //           it began (ms); `seen` is false for a pane first met mid-state (we
 //           don't know when that state began, so no time is shown).
 //   prs:    { <git dir>|<branch>: { at, pr } }      — last gh answer (ms).
+//   pruned: when other sessions' idle state dirs were last pruned (ms).
 // }
 
 type stamp struct {
@@ -49,6 +50,7 @@ type prEntry struct {
 type state struct {
 	Stamps map[string]*stamp   `json:"stamps"`
 	PRs    map[string]*prEntry `json:"prs"`
+	Pruned int64               `json:"pruned,omitempty"`
 }
 
 func readState(c *config) *state {
@@ -234,6 +236,15 @@ func sweep(c *config) error {
 	dirty := false
 	now := time.Now().UnixMilli()
 
+	// A prune time in the future means the clock went back; prune now rather
+	// than wait for the clock to catch up. The prune itself runs after the
+	// tokens are reported, so it doesn't delay the sidebar.
+	prune := !c.dry && (now-st.Pruned >= pruneEvery.Milliseconds() || st.Pruned > now)
+	if prune {
+		st.Pruned = now
+		dirty = true
+	}
+
 	// Stamps: keyed by terminal id so a pane id reused by a new terminal
 	// doesn't inherit an old time. Drop stamps for terminals that are gone.
 	keyOf := func(a agentInfo) string {
@@ -412,6 +423,10 @@ func sweep(c *config) error {
 		if err := reportTokens(c.socket, a.PaneID, patch); err != nil {
 			c.warn("report for %s failed: %v", a.PaneID, err)
 		}
+	}
+	if prune {
+		touchLock(c)
+		pruneSessions(c)
 	}
 	return nil
 }

@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"time"
@@ -32,6 +33,10 @@ const (
 	ghTimeout     = 4 * time.Second
 	ghMaxPerSweep = 4
 	maxValueRunes = 80 // herdr caps token values at 80 chars
+	// Other sessions' state dirs untouched for sessionIdle are removed, at
+	// most once per pruneEvery.
+	sessionIdle = 30 * 24 * time.Hour
+	pruneEvery  = 24 * time.Hour
 )
 
 // A waiting event must outlast a sweep that is running gh (ghTimeout plus
@@ -129,6 +134,71 @@ func run(c *config) {
 func sessionDir(socket string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(socket)))
 	return "session-" + hex.EncodeToString(sum[:8])
+}
+
+var sessionDirName = regexp.MustCompile(`^session-[0-9a-f]{16}$`)
+
+// pruneSessions removes other sessions' state dirs whose newest file is older
+// than sessionIdle. Best effort: a dir is only removed when it holds nothing
+// but regular files, symlinks are never followed, and errors are ignored.
+func pruneSessions(c *config) {
+	base, self := filepath.Dir(c.stateDir), filepath.Base(c.stateDir)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-sessionIdle)
+	for _, e := range entries {
+		// ReadDir doesn't follow symlinks: a link to a dir is not a dir here.
+		if !e.IsDir() || e.Name() == self || !sessionDirName.MatchString(e.Name()) {
+			continue
+		}
+		dir := filepath.Join(base, e.Name())
+		if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || !fi.ModTime().Before(cutoff) {
+			continue
+		}
+		if _, ok := idleFiles(dir, cutoff, ""); !ok {
+			continue
+		}
+		// That session may come back between the check and the removal. Hold
+		// its lock so no sweep of it runs meanwhile, then check again: a sweep
+		// that got in first has left fresh files. Our own .lock is skipped.
+		other := &config{stateDir: dir}
+		if got, err := acquireLock(other); !got || err != nil {
+			continue
+		}
+		files, ok := idleFiles(dir, cutoff, ".lock")
+		if ok {
+			for _, f := range files {
+				_ = os.Remove(filepath.Join(dir, f))
+			}
+		}
+		releaseLock(other)
+		if ok {
+			_ = os.Remove(dir) // fails, leaving the dir, if a file appeared meanwhile
+		}
+	}
+}
+
+// idleFiles lists dir's files, except skip, if every one is a regular file
+// older than cutoff.
+func idleFiles(dir string, cutoff time.Time, skip string) ([]string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false
+	}
+	var files []string
+	for _, e := range entries {
+		if e.Name() == skip {
+			continue
+		}
+		info, err := e.Info() // lstat
+		if err != nil || !info.Mode().IsRegular() || !info.ModTime().Before(cutoff) {
+			return nil, false
+		}
+		files = append(files, e.Name())
+	}
+	return files, true
 }
 
 // ---- lock ---------------------------------------------------------------------
