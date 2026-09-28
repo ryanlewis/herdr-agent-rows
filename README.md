@@ -184,10 +184,12 @@ one. A sweep:
 A sweep takes a few milliseconds, most of it process start, plus any `gh`
 calls.
 
-Sweeps run one at a time. A `.lock` file in the state directory holds the
-running sweep's pid, and a lock untouched for 30 seconds is taken over. A
-`.last-sweep` file records when the latest sweep started, so an event that
-a newer sweep already covered doesn't start another.
+Each herdr session keeps its own state, so sessions don't discard each
+other's times and PR answers. Within a session, sweeps run one at a time.
+A `.lock` file holds the running sweep's pid, and a lock untouched for 30
+seconds is taken over. A `.last-sweep` file records when the latest sweep
+started, so an event that a newer sweep already covered doesn't start
+another.
 
 Hooked events: `pane.agent_detected`, `pane.agent_status_changed`,
 `pane.focused`, `pane.created`, `pane.closed`, `tab.closed`,
@@ -204,11 +206,13 @@ works.
   `gh` makes network calls to GitHub; the plugin itself does not.
 - Writes: pane tokens through the socket, and `state.json`, `.lock` and
   `.last-sweep` (plus short-lived `state.json.tmp-<pid>` and
-  `.lock.stale-<pid>` files) in `HERDR_PLUGIN_STATE_DIR`
-  (`~/.local/state/herdr/plugins/io.rlew.agent-rows/` by default).
-  `state.json` is written with mode 0600. It holds terminal ids, state
-  times, checkout paths, branch names and PR numbers. It is safe to delete;
-  times then reappear after each agent's next state change.
+  `.lock.stale-<pid>` files) in a `session-<id>` directory under
+  `HERDR_PLUGIN_STATE_DIR`
+  (`~/.local/state/herdr/plugins/io.rlew.agent-rows/` by default). The id
+  is a hash of the session's socket path. Directories it creates are mode
+  0700, and `state.json` is written with mode 0600. It holds terminal ids,
+  state times, checkout paths, branch names and PR numbers. It is safe to
+  delete; times then reappear after each agent's next state change.
 
 ## Tokens
 
