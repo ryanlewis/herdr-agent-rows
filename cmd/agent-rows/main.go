@@ -94,7 +94,12 @@ func run(c *config) {
 		if covered() {
 			return
 		}
-		if acquireLock(c) {
+		got, err := acquireLock(c)
+		if err != nil {
+			c.warn("state dir %s is not usable: %v; skipping this event", c.stateDir, err)
+			return
+		}
+		if got {
 			if !covered() {
 				stampSweepStart(c)
 				if err := sweep(c); err != nil {
@@ -123,31 +128,36 @@ var beforeTakeover = func() {}
 
 func lockPath(c *config) string { return filepath.Join(c.stateDir, ".lock") }
 
-func acquireLock(c *config) bool {
+// acquireLock reports whether it took the lock. An error means the state dir
+// can't hold a lock at all (missing, not a directory, not writable), which
+// waiting won't fix; plain contention is (false, nil).
+func acquireLock(c *config) (bool, error) {
 	lock := lockPath(c)
 	pid := []byte(strconv.Itoa(os.Getpid()))
-	create := func() bool {
+	create := func() (bool, error) {
 		f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
 		if err != nil {
-			return false
+			return false, err
 		}
 		_, werr := f.Write(pid)
 		if cerr := f.Close(); werr != nil || cerr != nil {
 			_ = os.Remove(lock) // an ownerless lock would block every sweep until stale
-			return false
+			return false, errors.Join(werr, cerr)
 		}
-		return true
+		return true, nil
 	}
 	if err := os.MkdirAll(c.stateDir, 0o700); err != nil {
-		c.warn("state dir: %v", err)
-		return false
+		return false, err
 	}
-	if create() {
-		return true
+	if got, err := create(); got || err != nil {
+		return got, err
 	}
 	fi, err := os.Stat(lock)
 	if err != nil || time.Since(fi.ModTime()) <= lockStale {
-		return false
+		return false, nil
 	}
 	// rename is exclusive: exactly one concurrent stealer evicts the stale
 	// lock, then contends for the slot like everyone else. Between our Stat
@@ -158,7 +168,7 @@ func acquireLock(c *config) bool {
 	beforeTakeover()
 	tomb := filepath.Join(c.stateDir, ".lock.stale-"+strconv.Itoa(os.Getpid()))
 	if os.Rename(lock, tomb) != nil {
-		return false
+		return false, nil
 	}
 	if tfi, err := os.Stat(tomb); err != nil || !os.SameFile(fi, tfi) || time.Since(tfi.ModTime()) <= lockStale {
 		// ErrExist: the slot was re-taken meanwhile, nothing to restore into.
@@ -166,10 +176,10 @@ func acquireLock(c *config) bool {
 		// delete a live lock.
 		if err := os.Link(tomb, lock); err != nil && !errors.Is(err, fs.ErrExist) {
 			_ = os.Rename(tomb, lock)
-			return false
+			return false, nil
 		}
 		_ = os.Remove(tomb)
-		return false
+		return false, nil
 	}
 	_ = os.Remove(tomb)
 	return create()
