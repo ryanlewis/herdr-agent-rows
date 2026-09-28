@@ -82,9 +82,14 @@ func run(c *config) {
 	// An in-flight sweep may have read herdr's state before the change that
 	// fired this event, so only a sweep that STARTED after this event arrived
 	// covers it. On contention, wait briefly and re-check; give up after
-	// retryWindow (the next event self-heals a rare miss).
+	// retryWindow (the next event self-heals a rare miss). A start time in
+	// the future means the clock went back since that sweep; it covers
+	// nothing, or no event would sweep until the clock caught up.
 	arrival := time.Now()
-	covered := func() bool { return lastSweepStart(c).After(arrival) }
+	covered := func() bool {
+		start := lastSweepStart(c)
+		return start.After(arrival) && !start.After(time.Now())
+	}
 	for {
 		if covered() {
 			return

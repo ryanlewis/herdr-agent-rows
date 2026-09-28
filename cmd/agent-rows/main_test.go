@@ -660,6 +660,23 @@ func TestStateFilesOwnerOnly(t *testing.T) {
 	}
 }
 
+// After the clock steps back, the last sweep's start lies in the future; it
+// must not count as covering new events.
+func TestFutureLastSweepIgnored(t *testing.T) {
+	sb := newSandbox(t)
+	stamp := filepath.Join(sb.stateDir, ".last-sweep")
+	os.WriteFile(stamp, nil, 0o600)
+	future := time.Now().Add(time.Hour)
+	os.Chtimes(stamp, future, future)
+	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}, runOpts{})
+	if len(r.reports) != 1 {
+		t.Errorf("reports = %v, want a sweep (%s)", r.reports, r.stderr)
+	}
+	if fi, err := os.Stat(stamp); err != nil || fi.ModTime().After(time.Now()) {
+		t.Errorf("stamp not reset to the sweep's start: %v, %v", fi.ModTime(), err)
+	}
+}
+
 func TestRefusesOutsideHerdr(t *testing.T) {
 	sb := newSandbox(t)
 	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}, runOpts{noStateDir: true})
