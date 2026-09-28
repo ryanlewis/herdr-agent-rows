@@ -37,7 +37,8 @@ type report struct {
 type sandbox struct {
 	t        *testing.T
 	dir      string
-	stateDir string
+	base     string // the plugin's state dir, shared by sessions
+	stateDir string // this sandbox's session under base
 	sock     string
 	ghLog    string
 	mu       sync.Mutex
@@ -53,8 +54,9 @@ func newSandbox(t *testing.T) *sandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	sb := &sandbox{t: t, dir: dir, stateDir: filepath.Join(dir, "state"), sock: filepath.Join(dir, "h.sock"), ghLog: filepath.Join(dir, "gh.log")}
-	os.MkdirAll(sb.stateDir, 0o755)
+	sb := &sandbox{t: t, dir: dir, base: filepath.Join(dir, "state"), sock: filepath.Join(dir, "h.sock"), ghLog: filepath.Join(dir, "gh.log")}
+	sb.stateDir = filepath.Join(sb.base, sessionDir(sb.sock))
+	os.MkdirAll(sb.stateDir, 0o700)
 	ln, err := net.Listen("unix", sb.sock)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +130,7 @@ type runOpts struct {
 	ghSleep    int               // seconds
 	gh         string            // override gh path
 	noStateDir bool
-	stateDir   string // override the sandbox's state dir
+	stateDir   string // override the plugin's state dir (sb.base)
 	dry        bool
 }
 
@@ -176,7 +178,7 @@ func (sb *sandbox) run(w *world, o runOpts) result {
 		gh = sb.fakeGh(o)
 	}
 	var stdout, stderr bytes.Buffer
-	c := &config{dry: o.dry, socket: sb.sock, stateDir: sb.stateDir, gh: gh, stdout: &stdout, stderr: &stderr}
+	c := &config{dry: o.dry, socket: sb.sock, stateDir: sb.base, gh: gh, stdout: &stdout, stderr: &stderr}
 	if o.noStateDir {
 		c.stateDir = ""
 	}
@@ -701,6 +703,33 @@ func TestUnusableStateDirFailsFast(t *testing.T) {
 		}
 		if len(r.reports) != 0 || strings.Count(r.stderr, "\n") != 1 || !strings.Contains(r.stderr, dir) || strings.Contains(r.stderr, "busy") {
 			t.Errorf("%s: reports = %v, stderr = %q", name, r.reports, r.stderr)
+		}
+	}
+}
+
+// Two herdr sessions share the plugin's state dir. Each sweep drops state
+// for agents it can't see, so sessions must not share state files.
+func TestSessionsKeepSeparateState(t *testing.T) {
+	a, b := newSandbox(t), newSandbox(t)
+	repoA := repo(t, a.dir, "a", "feat/a", "main")
+	wa := &world{Agents: []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": repoA, "agent_status": "working"})}, Workspaces: []map[string]any{ws("w1", "a")}}
+	apply(wa, a.run(wa, runOpts{}).reports)
+	wa.Agents[0]["agent_status"] = "done"
+	apply(wa, a.run(wa, runOpts{}).reports) // "done hh:mm", PR looked up
+
+	wb := &world{Agents: []map[string]any{agent("w9:p1", "w9", nil)}, Workspaces: []map[string]any{ws("w9", "b")}}
+	b.run(wb, runOpts{stateDir: a.base}) // session b, same plugin state dir
+
+	r := a.run(wa, runOpts{})
+	if len(r.reports) != 0 || len(r.gh) != 0 {
+		t.Errorf("session a lost its state: reports = %v, gh = %v", r.reports, r.gh)
+	}
+	if st := r.state.Stamps["term_w1:p1"]; st == nil || !st.Seen {
+		t.Errorf("session a stamp = %+v", st)
+	}
+	for _, name := range []string{a.stateDir, filepath.Join(a.base, sessionDir(b.sock))} {
+		if fi, err := os.Stat(name); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Errorf("%s: %v %v", name, fi, err)
 		}
 	}
 }

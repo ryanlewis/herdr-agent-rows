@@ -10,6 +10,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -40,7 +42,7 @@ var retryWindow = ghTimeout + 4*time.Second
 type config struct {
 	dry      bool
 	socket   string
-	stateDir string // "" outside herdr without --dry-run
+	stateDir string // the plugin's state dir; "" outside herdr without --dry-run
 	gh       string
 	stdout   io.Writer
 	stderr   io.Writer
@@ -72,6 +74,9 @@ func run(c *config) {
 	if c.stateDir == "" && !c.dry {
 		c.warn("HERDR_PLUGIN_STATE_DIR is not set (not running under herdr?); use --dry-run to preview")
 		return
+	}
+	if c.stateDir != "" {
+		c.stateDir = filepath.Join(c.stateDir, sessionDir(c.socket))
 	}
 	if c.dry {
 		if err := sweep(c); err != nil {
@@ -115,6 +120,15 @@ func run(c *config) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// sessionDir names the state subdirectory for one herdr session. The
+// plugin's state dir is shared by every session of the user, and a sweep
+// prunes state for agents it doesn't see, so each session, identified by
+// its socket path, keeps its stamps, PR cache and lock apart.
+func sessionDir(socket string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(socket)))
+	return "session-" + hex.EncodeToString(sum[:8])
 }
 
 // ---- lock ---------------------------------------------------------------------
