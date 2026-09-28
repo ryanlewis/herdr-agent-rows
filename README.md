@@ -171,9 +171,9 @@ one. A sweep:
    `refs/remotes/origin/HEAD` in the common git dir. Only small regular
    files are read. A layout it doesn't recognise, such as reftable, falls
    back to `git symbolic-ref`;
-4. runs `gh pr list --head=<branch> --state all --json number,state` in
-   the agent's cwd for each branch whose agent changed state since its last
-   lookup. Of several PRs from the branch, an open one is shown, else the
+4. runs `gh pr list --head=<branch> --state all --limit 20` in the agent's
+   cwd for each branch whose agent changed state since its last lookup.
+   PRs from forks are ignored. Of the rest, an open one is shown, else the
    most recent. At most 4 lookups run per sweep, in parallel, each stopped
    after 4 seconds. A missing, failing or slow `gh` is cached as "no PR"
    until the next state change, and the row shows the branch;

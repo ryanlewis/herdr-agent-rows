@@ -205,15 +205,17 @@ type pr struct {
 
 // lookupPr returns the branch's PR, or nil for no PR, gh missing, gh
 // failing or gh too slow. It matches PRs by head branch, so a branch named
-// like a PR number ("42", "#42") is not read as one. Of several PRs from the
-// branch, an open one wins, then the most recent (highest number).
+// like a PR number ("42", "#42") is not read as one. PRs from forks are
+// skipped: a fork's branch of the same name is someone else's work. Of
+// several PRs from the branch, an open one wins, then the most recent
+// (highest number).
 func lookupPr(gh, dir, branch string) *pr {
 	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
 	defer cancel()
 	// --head=<branch> as one argument, so a branch named like a flag (git
 	// plumbing allows "--repo=x") stays the flag's value.
 	cmd := exec.CommandContext(ctx, gh, "pr", "list", "--head="+branch, "--state", "all",
-		"--json", "number,state", "--limit", strconv.Itoa(ghPrLimit))
+		"--json", "number,state,isCrossRepository", "--limit", strconv.Itoa(ghPrLimit))
 	cmd.Dir = dir
 	// A killed gh can leave children holding stdout open; don't wait on them.
 	cmd.WaitDelay = time.Second
@@ -222,15 +224,16 @@ func lookupPr(gh, dir, branch string) *pr {
 		return nil
 	}
 	var prs []struct {
-		Number *int   `json:"number"`
-		State  string `json:"state"`
+		Number          *int   `json:"number"`
+		State           string `json:"state"`
+		CrossRepository bool   `json:"isCrossRepository"`
 	}
 	if json.Unmarshal(out, &prs) != nil {
 		return nil
 	}
 	var best *pr
 	for _, p := range prs {
-		if p.Number == nil {
+		if p.Number == nil || p.CrossRepository {
 			continue
 		}
 		c := &pr{Number: *p.Number, State: p.State}
