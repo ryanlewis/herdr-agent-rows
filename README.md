@@ -215,6 +215,9 @@ works.
   0700, and `state.json` is written with mode 0600. It holds terminal ids,
   state times, checkout paths, branch names and PR numbers. It is safe to
   delete; times then reappear after each agent's next state change.
+- Removes: once a day, other sessions' `session-<id>` directories in which
+  nothing has changed for 30 days. A directory holding anything other than
+  plain files is left alone, and symlinks are not followed.
 
 ## Tokens
 
