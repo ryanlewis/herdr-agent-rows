@@ -48,8 +48,12 @@ herdr plugin install ryanlewis/herdr-agent-rows
 ```
 
 In an interactive terminal, herdr previews the source and the build command
-(`go build -o agent-rows ./cmd/agent-rows`) and asks before running it. Pin
-a revision with `--ref`.
+(`go build -o agent-rows ./cmd/agent-rows`) and asks before running it. To
+pin a release, pass its tag with `--ref`:
+
+```sh
+herdr plugin install ryanlewis/herdr-agent-rows --ref v0.2.0
+```
 
 The plugin reports tokens but changes nothing on screen until you add them
 to the sidebar config below.
