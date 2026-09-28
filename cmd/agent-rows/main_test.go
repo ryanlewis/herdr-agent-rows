@@ -678,8 +678,10 @@ func TestFutureLastSweepIgnored(t *testing.T) {
 	if len(r.reports) != 1 {
 		t.Errorf("reports = %v, want a sweep (%s)", r.reports, r.stderr)
 	}
-	if fi, err := os.Stat(stamp); err != nil || fi.ModTime().After(time.Now()) {
-		t.Errorf("stamp not reset to the sweep's start: %v, %v", fi.ModTime(), err)
+	if fi, err := os.Stat(stamp); err != nil {
+		t.Errorf("stamp: %v", err)
+	} else if fi.ModTime().After(time.Now()) {
+		t.Errorf("stamp not reset to the sweep's start: %v", fi.ModTime())
 	}
 }
 
@@ -899,10 +901,13 @@ func TestNumericBranchIsNotAPrNumber(t *testing.T) {
 	r := sb.run(&world{
 		Agents:     []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": a}), agent("w2:p1", "w2", map[string]any{"cwd": b})},
 		Workspaces: []map[string]any{ws("w1", "a"), ws("w2", "b")},
-	}, runOpts{prs: map[string]string{"99": `{"number":99,"state":"OPEN"}`}})
+	}, runOpts{})
 	m := byPane(r.reports)
 	if m["w1:p1"].set["ar_git"] != "42" || m["w2:p1"].set["ar_git"] != "#7" {
 		t.Errorf("ar_git = %q / %q, want the branch names", m["w1:p1"].set["ar_git"], m["w2:p1"].set["ar_git"])
+	}
+	if len(r.gh) != 2 {
+		t.Errorf("gh calls = %q, want one per branch", r.gh)
 	}
 	for _, call := range r.gh {
 		if !strings.Contains(call, "--head=42 ") && !strings.Contains(call, "--head=#7 ") {
@@ -912,6 +917,7 @@ func TestNumericBranchIsNotAPrNumber(t *testing.T) {
 }
 
 // Of several PRs from one branch, an open one wins, then the highest number.
+// PRs from forks with a branch of the same name don't count.
 func TestPrChoiceAmongSeveral(t *testing.T) {
 	sb := newSandbox(t)
 	a := repo(t, sb.dir, "a", "feat/a", "main")

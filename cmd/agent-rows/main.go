@@ -42,7 +42,7 @@ var retryWindow = ghTimeout + 4*time.Second
 type config struct {
 	dry      bool
 	socket   string
-	stateDir string // the plugin's state dir; "" outside herdr without --dry-run
+	stateDir string // plugin state dir, narrowed by run to this session's; "" outside herdr without --dry-run
 	gh       string
 	stdout   io.Writer
 	stderr   io.Writer
