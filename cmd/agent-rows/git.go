@@ -204,13 +204,16 @@ type pr struct {
 }
 
 // lookupPr returns the branch's PR, or nil for no PR, gh missing, gh
-// failing or gh too slow.
+// failing or gh too slow. It matches PRs by head branch, so a branch named
+// like a PR number ("42", "#42") is not read as one. Of several PRs from the
+// branch, an open one wins, then the most recent (highest number).
 func lookupPr(gh, dir, branch string) *pr {
 	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
 	defer cancel()
-	// "--" so a branch named like a flag (git plumbing allows "--repo=x")
-	// reaches gh as the branch argument.
-	cmd := exec.CommandContext(ctx, gh, "pr", "view", "--json", "number,state", "--", branch)
+	// --head=<branch> as one argument, so a branch named like a flag (git
+	// plumbing allows "--repo=x") stays the flag's value.
+	cmd := exec.CommandContext(ctx, gh, "pr", "list", "--head="+branch, "--state", "all",
+		"--json", "number,state", "--limit", strconv.Itoa(ghPrLimit))
 	cmd.Dir = dir
 	// A killed gh can leave children holding stdout open; don't wait on them.
 	cmd.WaitDelay = time.Second
@@ -218,14 +221,35 @@ func lookupPr(gh, dir, branch string) *pr {
 	if err != nil {
 		return nil
 	}
-	var p struct {
+	var prs []struct {
 		Number *int   `json:"number"`
 		State  string `json:"state"`
 	}
-	if json.Unmarshal(out, &p) != nil || p.Number == nil {
+	if json.Unmarshal(out, &prs) != nil {
 		return nil
 	}
-	return &pr{Number: *p.Number, State: p.State}
+	var best *pr
+	for _, p := range prs {
+		if p.Number == nil {
+			continue
+		}
+		c := &pr{Number: *p.Number, State: p.State}
+		if best == nil || prefer(c, best) {
+			best = c
+		}
+	}
+	return best
+}
+
+// How many PRs from one branch to consider.
+const ghPrLimit = 20
+
+func prefer(a, b *pr) bool {
+	aOpen, bOpen := strings.EqualFold(a.State, "OPEN"), strings.EqualFold(b.State, "OPEN")
+	if aOpen != bOpen {
+		return aOpen
+	}
+	return a.Number > b.Number
 }
 
 func prLabel(p *pr) string {

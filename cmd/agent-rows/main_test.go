@@ -141,18 +141,23 @@ type result struct {
 	lockOn  bool
 }
 
-// fakeGh writes a gh stand-in with this run's answers baked in.
+// fakeGh writes a gh stand-in with this run's answers baked in. It answers
+// `gh pr list --head=<branch>` with the PR list for that branch; a single
+// PR object in o.prs is served as a one-item list. Like the real gh,
+// `gh pr view <n>` with a numeric argument shows PR n.
 func (sb *sandbox) fakeGh(o runOpts) string {
 	var cases strings.Builder
 	for branch, out := range o.prs {
+		if !strings.HasPrefix(out, "[") {
+			out = "[" + out + "]"
+		}
 		fmt.Fprintf(&cases, "  %q) printf '%%s' %q ;;\n", branch, out)
 	}
 	sleep := ""
 	if o.ghSleep > 0 {
 		sleep = fmt.Sprintf("sleep %d\n", o.ghSleep)
 	}
-	// The branch is the last argument.
-	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\n%sfor branch; do :; done\ncase \"$branch\" in\n%s  *) echo 'no pull requests found' >&2; exit 1 ;;\nesac\n", sb.ghLog, sleep, cases.String())
+	script := fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\n%sif [ \"$2\" = view ]; then for a; do last=\"$a\"; done; case \"$last\" in [0-9]*|\\#[0-9]*) printf '{\"number\":%%s,\"state\":\"OPEN\"}' \"${last#\\#}\"; exit 0 ;; esac; exit 1; fi\nfor a; do case \"$a\" in --head=*) branch=\"${a#--head=}\" ;; esac; done\ncase \"$branch\" in\n%s  *) printf '[]' ;;\nesac\n", sb.ghLog, sleep, cases.String())
 	p := filepath.Join(sb.dir, "gh")
 	os.WriteFile(p, []byte(script), 0o755)
 	return p
@@ -803,11 +808,53 @@ func TestFlagShapedBranchIsNotAnOption(t *testing.T) {
 	git(t, a, "symbolic-ref", "HEAD", "refs/heads/--repo=other/repo")
 	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": a})}, Workspaces: []map[string]any{ws("w1", "a")}},
 		runOpts{prs: map[string]string{"--repo=other/repo": `{"number":3,"state":"OPEN"}`}})
-	if len(r.gh) != 1 || r.gh[0] != "pr view --json number,state -- --repo=other/repo" {
+	if len(r.gh) != 1 || r.gh[0] != "pr list --head=--repo=other/repo --state all --json number,state --limit 20" {
 		t.Errorf("gh calls = %q", r.gh)
 	}
 	if got := byPane(r.reports)["w1:p1"].set["ar_git"]; got != "#3" {
 		t.Errorf("ar_git = %q", got)
+	}
+}
+
+// A branch named like a PR number is matched as a head branch, never read as
+// the PR with that number.
+func TestNumericBranchIsNotAPrNumber(t *testing.T) {
+	sb := newSandbox(t)
+	a := repo(t, sb.dir, "a", "42", "main")
+	b := repo(t, sb.dir, "b", "#7", "main")
+	r := sb.run(&world{
+		Agents:     []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": a}), agent("w2:p1", "w2", map[string]any{"cwd": b})},
+		Workspaces: []map[string]any{ws("w1", "a"), ws("w2", "b")},
+	}, runOpts{prs: map[string]string{"99": `{"number":99,"state":"OPEN"}`}})
+	m := byPane(r.reports)
+	if m["w1:p1"].set["ar_git"] != "42" || m["w2:p1"].set["ar_git"] != "#7" {
+		t.Errorf("ar_git = %q / %q, want the branch names", m["w1:p1"].set["ar_git"], m["w2:p1"].set["ar_git"])
+	}
+	for _, call := range r.gh {
+		if !strings.Contains(call, "--head=42 ") && !strings.Contains(call, "--head=#7 ") {
+			t.Errorf("gh call not by head branch: %q", call)
+		}
+	}
+}
+
+// Of several PRs from one branch, an open one wins, then the highest number.
+func TestPrChoiceAmongSeveral(t *testing.T) {
+	sb := newSandbox(t)
+	a := repo(t, sb.dir, "a", "feat/a", "main")
+	b := repo(t, sb.dir, "b", "feat/b", "main")
+	r := sb.run(&world{
+		Agents:     []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": a}), agent("w2:p1", "w2", map[string]any{"cwd": b})},
+		Workspaces: []map[string]any{ws("w1", "a"), ws("w2", "b")},
+	}, runOpts{prs: map[string]string{
+		"feat/a": `[{"number":9,"state":"CLOSED"},{"number":5,"state":"OPEN"},{"number":3,"state":"MERGED"}]`,
+		"feat/b": `[{"number":3,"state":"MERGED"},{"number":8,"state":"CLOSED"}]`,
+	}})
+	m := byPane(r.reports)
+	if got := m["w1:p1"].set["ar_git"]; got != "#5" {
+		t.Errorf("open PR: ar_git = %q, want #5", got)
+	}
+	if got := m["w2:p1"].set["ar_git"]; got != "#8 closed" {
+		t.Errorf("newest PR: ar_git = %q, want #8 closed", got)
 	}
 }
 
