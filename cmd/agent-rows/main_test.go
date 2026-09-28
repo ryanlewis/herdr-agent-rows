@@ -882,7 +882,7 @@ func TestFlagShapedBranchIsNotAnOption(t *testing.T) {
 	git(t, a, "symbolic-ref", "HEAD", "refs/heads/--repo=other/repo")
 	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": a})}, Workspaces: []map[string]any{ws("w1", "a")}},
 		runOpts{prs: map[string]string{"--repo=other/repo": `{"number":3,"state":"OPEN"}`}})
-	if len(r.gh) != 1 || r.gh[0] != "pr list --head=--repo=other/repo --state all --json number,state --limit 20" {
+	if len(r.gh) != 1 || r.gh[0] != "pr list --head=--repo=other/repo --state all --json number,state,isCrossRepository --limit 20" {
 		t.Errorf("gh calls = %q", r.gh)
 	}
 	if got := byPane(r.reports)["w1:p1"].set["ar_git"]; got != "#3" {
@@ -920,8 +920,8 @@ func TestPrChoiceAmongSeveral(t *testing.T) {
 		Agents:     []map[string]any{agent("w1:p1", "w1", map[string]any{"cwd": a}), agent("w2:p1", "w2", map[string]any{"cwd": b})},
 		Workspaces: []map[string]any{ws("w1", "a"), ws("w2", "b")},
 	}, runOpts{prs: map[string]string{
-		"feat/a": `[{"number":9,"state":"CLOSED"},{"number":5,"state":"OPEN"},{"number":3,"state":"MERGED"}]`,
-		"feat/b": `[{"number":3,"state":"MERGED"},{"number":8,"state":"CLOSED"}]`,
+		"feat/a": `[{"number":9,"state":"CLOSED"},{"number":5,"state":"OPEN"},{"number":3,"state":"MERGED"},{"number":12,"state":"OPEN","isCrossRepository":true}]`,
+		"feat/b": `[{"number":3,"state":"MERGED"},{"number":8,"state":"CLOSED"},{"number":11,"state":"OPEN","isCrossRepository":true}]`,
 	}})
 	m := byPane(r.reports)
 	if got := m["w1:p1"].set["ar_git"]; got != "#5" {
