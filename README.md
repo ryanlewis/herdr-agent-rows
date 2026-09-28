@@ -189,7 +189,8 @@ other's times and PR answers. Within a session, sweeps run one at a time.
 A `.lock` file holds the running sweep's pid, and a lock untouched for 30
 seconds is taken over. A `.last-sweep` file records when the latest sweep
 started, so an event that a newer sweep already covered doesn't start
-another.
+another. If the state directory can't hold a lock, the event is skipped at
+once with a warning that names the directory.
 
 Hooked events: `pane.agent_detected`, `pane.agent_status_changed`,
 `pane.focused`, `pane.created`, `pane.closed`, `tab.closed`,
