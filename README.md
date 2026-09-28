@@ -171,11 +171,12 @@ one. A sweep:
    `refs/remotes/origin/HEAD` in the common git dir. Only small regular
    files are read. A layout it doesn't recognise, such as reftable, falls
    back to `git symbolic-ref`;
-4. runs `gh pr view --json number,state -- <branch>` in the agent's cwd for
-   each branch whose agent changed state since its last lookup. At most 4
-   lookups run per sweep, in parallel, each stopped after 4 seconds. A
-   missing, failing or slow `gh` is cached as "no PR" until the next state
-   change, and the row shows the branch;
+4. runs `gh pr list --head=<branch> --state all --json number,state` in
+   the agent's cwd for each branch whose agent changed state since its last
+   lookup. Of several PRs from the branch, an open one is shown, else the
+   most recent. At most 4 lookups run per sweep, in parallel, each stopped
+   after 4 seconds. A missing, failing or slow `gh` is cached as "no PR"
+   until the next state change, and the row shows the branch;
 5. reports only the tokens that changed, one `pane.report_metadata` request
    per changed pane, under source `io.rlew.agent-rows`. A sweep with no
    changes makes no reports.
