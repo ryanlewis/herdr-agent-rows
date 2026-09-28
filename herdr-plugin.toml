@@ -1,0 +1,40 @@
+id = "io.rlew.agent-rows"
+name = "Agent Rows"
+description = "Compact Agent sidebar rows: de-duplicated titles, branch/PR, stamped state time, optional lead/worker grouping"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+platforms = ["macos", "linux"]
+
+# Built at install time; Go is the only requirement. `herdr plugin link`
+# skips this step, so build by hand when developing (see README).
+[[build]]
+platforms = ["linux", "macos"]
+command = ["go", "build", "-o", "agent-rows", "./cmd/agent-rows"]
+
+[[events]]
+on = "pane.agent_detected"         # session (re)appears — also after a restart
+command = ["./agent-rows"]
+[[events]]
+on = "pane.agent_status_changed"   # main heartbeat: every turn boundary
+command = ["./agent-rows"]
+[[events]]
+on = "pane.focused"                # done → idle once seen
+command = ["./agent-rows"]
+[[events]]
+on = "pane.created"
+command = ["./agent-rows"]
+[[events]]
+on = "pane.closed"                 # a worker closing changes its lead's roll-up
+command = ["./agent-rows"]
+[[events]]
+on = "tab.closed"                  # closing a tab fires no pane.closed for its panes
+command = ["./agent-rows"]
+[[events]]
+on = "workspace.closed"            # nor does closing a workspace (workers can sit outside their lead's)
+command = ["./agent-rows"]
+[[events]]
+on = "pane.exited"
+command = ["./agent-rows"]
+[[events]]
+on = "workspace.renamed"           # ar_name carries the workspace label
+command = ["./agent-rows"]

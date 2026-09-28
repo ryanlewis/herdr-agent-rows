@@ -1,0 +1,51 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest] # the manifest's platforms
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false # stdlib only: nothing to cache
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+      - name: build as herdr plugin install does
+        run: go build -o agent-rows ./cmd/agent-rows
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    env:
+      # renovate: datasource=go depName=golang.org/x/vuln
+      GOVULNCHECK_VERSION: v1.8.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # Checks the code and the standard library of the toolchain in go.mod.
+      # golang/govulncheck-action installs govulncheck@latest, so run a
+      # pinned version instead; go run verifies it against sum.golang.org.
+      - run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
