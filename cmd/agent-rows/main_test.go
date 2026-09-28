@@ -651,6 +651,40 @@ func TestStaleLockRefreshedMidTakeover(t *testing.T) {
 	}
 }
 
+// A sweep that crashed holding the lock, followed by the clock stepping back,
+// leaves a lock touched in the future. It is taken over, not waited out.
+func TestFutureLockTakenOver(t *testing.T) {
+	orig := retryWindow
+	retryWindow = 200 * time.Millisecond
+	t.Cleanup(func() { retryWindow = orig })
+	sb := newSandbox(t)
+	lock := filepath.Join(sb.stateDir, ".lock")
+	os.WriteFile(lock, []byte("99999"), 0o644)
+	future := time.Now().Add(time.Hour)
+	os.Chtimes(lock, future, future)
+	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}, runOpts{})
+	if len(r.reports) != 1 || r.lockOn {
+		t.Errorf("reports = %v, lock = %v (%s)", r.reports, r.lockOn, r.stderr)
+	}
+}
+
+// A live lock whose mtime is only a little ahead (clock skew on a network
+// filesystem) is not taken over.
+func TestSlightlyFutureLockKept(t *testing.T) {
+	orig := retryWindow
+	retryWindow = 200 * time.Millisecond
+	t.Cleanup(func() { retryWindow = orig })
+	sb := newSandbox(t)
+	lock := filepath.Join(sb.stateDir, ".lock")
+	os.WriteFile(lock, []byte("99999"), 0o644)
+	future := time.Now().Add(5 * time.Second)
+	os.Chtimes(lock, future, future)
+	r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}, runOpts{})
+	if len(r.reports) != 0 || !r.lockOn {
+		t.Errorf("reports = %v, lock = %v (%s)", r.reports, r.lockOn, r.stderr)
+	}
+}
+
 func TestStateFilesOwnerOnly(t *testing.T) {
 	sb := newSandbox(t)
 	a := repo(t, sb.dir, "a", "feat/a", "main")

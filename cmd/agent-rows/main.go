@@ -133,14 +133,25 @@ func sessionDir(socket string) string {
 
 // ---- lock ---------------------------------------------------------------------
 // One sweep at a time: an O_EXCL .lock file holding the owner's pid. The
-// owner refreshes its mtime between slow steps; a lock untouched for
-// lockStale is taken over.
+// owner refreshes its mtime between slow steps; a stale lock is taken over.
 
 // beforeTakeover runs between the stale check and the takeover rename; tests
 // use it to stage a race there.
 var beforeTakeover = func() {}
 
 func lockPath(c *config) string { return filepath.Join(c.stateDir, ".lock") }
+
+// lockIsStale reports whether a lock with this mtime can be taken over: it is
+// untouched for lockStale, or its mtime is more than lockStale in the future.
+// A future mtime means the clock went back after the last touch, and waiting
+// for the clock to catch up could take any length of time. The margin keeps a
+// live lock whose mtime is a little ahead (clock skew on a network
+// filesystem) from being taken over; such a lock goes stale within
+// 2*lockStale at most.
+func lockIsStale(mtime time.Time) bool {
+	age := time.Since(mtime)
+	return age > lockStale || age < -lockStale
+}
 
 // acquireLock reports whether it took the lock. An error means the state dir
 // can't hold a lock at all (missing, not a directory, not writable), which
@@ -170,7 +181,7 @@ func acquireLock(c *config) (bool, error) {
 		return got, err
 	}
 	fi, err := os.Stat(lock)
-	if err != nil || time.Since(fi.ModTime()) <= lockStale {
+	if err != nil || !lockIsStale(fi.ModTime()) {
 		return false, nil
 	}
 	// rename is exclusive: exactly one concurrent stealer evicts the stale
@@ -184,7 +195,7 @@ func acquireLock(c *config) (bool, error) {
 	if os.Rename(lock, tomb) != nil {
 		return false, nil
 	}
-	if tfi, err := os.Stat(tomb); err != nil || !os.SameFile(fi, tfi) || time.Since(tfi.ModTime()) <= lockStale {
+	if tfi, err := os.Stat(tomb); err != nil || !os.SameFile(fi, tfi) || !lockIsStale(tfi.ModTime()) {
 		// ErrExist: the slot was re-taken meanwhile, nothing to restore into.
 		// Anything else (e.g. no hard links here): move it back rather than
 		// delete a live lock.
