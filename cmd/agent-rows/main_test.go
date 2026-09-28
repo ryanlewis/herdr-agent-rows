@@ -128,6 +128,7 @@ type runOpts struct {
 	ghSleep    int               // seconds
 	gh         string            // override gh path
 	noStateDir bool
+	stateDir   string // override the sandbox's state dir
 	dry        bool
 }
 
@@ -178,6 +179,9 @@ func (sb *sandbox) run(w *world, o runOpts) result {
 	c := &config{dry: o.dry, socket: sb.sock, stateDir: sb.stateDir, gh: gh, stdout: &stdout, stderr: &stderr}
 	if o.noStateDir {
 		c.stateDir = ""
+	}
+	if o.stateDir != "" {
+		c.stateDir = o.stateDir
 	}
 	t0 := time.Now()
 	run(c)
@@ -674,6 +678,30 @@ func TestFutureLastSweepIgnored(t *testing.T) {
 	}
 	if fi, err := os.Stat(stamp); err != nil || fi.ModTime().After(time.Now()) {
 		t.Errorf("stamp not reset to the sweep's start: %v, %v", fi.ModTime(), err)
+	}
+}
+
+// A state dir that can't hold a lock fails the event at once, naming the
+// dir, rather than waiting out the lock retry window.
+func TestUnusableStateDirFailsFast(t *testing.T) {
+	sb := newSandbox(t)
+	file := filepath.Join(sb.dir, "file")
+	os.WriteFile(file, nil, 0o600)
+	dirs := map[string]string{"not a directory": filepath.Join(file, "state")}
+	if os.Geteuid() != 0 { // root writes through a read-only mode
+		ro := filepath.Join(sb.dir, "ro")
+		os.MkdirAll(ro, 0o500)
+		t.Cleanup(func() { os.Chmod(ro, 0o700) })
+		dirs["read-only"] = ro
+	}
+	for name, dir := range dirs {
+		r := sb.run(&world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "a")}}, runOpts{stateDir: dir})
+		if r.elapsed > time.Second {
+			t.Errorf("%s: took %v", name, r.elapsed)
+		}
+		if len(r.reports) != 0 || strings.Count(r.stderr, "\n") != 1 || !strings.Contains(r.stderr, dir) || strings.Contains(r.stderr, "busy") {
+			t.Errorf("%s: reports = %v, stderr = %q", name, r.reports, r.stderr)
+		}
 	}
 }
 
