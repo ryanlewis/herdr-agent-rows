@@ -1,7 +1,7 @@
 id = "io.rlew.agent-rows"
 name = "Agent Rows"
 description = "Compact Agent sidebar rows: de-duplicated titles, branch/PR, stamped state time, optional lead/worker grouping"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.1"
 platforms = ["macos", "linux"]
 
