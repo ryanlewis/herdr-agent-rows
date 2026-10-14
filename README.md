@@ -2,19 +2,20 @@
 
 A [herdr](https://herdr.dev) plugin for the Agent panel in herdr's sidebar.
 It shows each agent on one line: its workspace name, the branch or PR it is
-working on, and the time of its last state change. A second line shows the
+working on, and how long ago its state last changed. A second line shows the
 terminal title, but only when it differs from the workspace name.
 
 ```
-● api · feat/rate-limit · idle 13:40
+● api · feat/rate-limit · idle 12m ago
    Add rate limiting to the login endpoint
-✓ notes · done 14:02
+✓ notes · done 5m ago
 ◐ web · #42
 ```
 
 It can also group agents. In setups such as agentic teams, where one agent
 coordinates others, panes tagged with `role` and `lead` tokens show as a
-lead with its workers indented beneath it. This is optional; see
+lead, with its branch and worker count on a second line and its workers
+indented beneath it. This is optional; see
 [Grouping agents under a lead](#grouping-agents-under-a-lead).
 
 ## Why
@@ -74,11 +75,11 @@ In your herdr `config.toml` (see
 rows = [
   ["state_icon", { token = "$ar_name", bold = true }, "$ar_git", "$ar_state",
    { token = "$ar_wname", dim = true }, { token = "$ar_wgit", dim = true }, { token = "$ar_wstate", dim = true }],
-  ["$ar_title"],
+  ["$ar_title", "$ar_lgit", "$ar_lstate"],
 ]
 ```
 
-The `$ar_w*` entries are only set for workers when you use grouping.
+The `$ar_w*` and `$ar_l*` entries are only set when you use grouping.
 Otherwise they stay empty and nothing is shown for them.
 
 ## What the rows show
@@ -89,11 +90,11 @@ Each agent's row shows:
 - **Branch or PR**, only when the checkout is off its default branch
   (`origin/HEAD`, else `main` or `master`). If the branch has a PR, the PR
   replaces the branch name: `#42`, `#42 merged`, `#42 closed`.
-- **State time**, recorded when the state changes: `done 14:02`,
-  `blocked 14:05`, `idle 14:02`. Nothing is shown while an agent works,
-  because the icon already says so. `done` and `idle` count as one state,
-  so looking at a finished agent keeps its finish time. An agent first seen
-  partway through a state shows the state without a time.
+- **State time**, how long ago the state changed: `done just now`,
+  `blocked 5m ago`, `idle 2h ago`, `idle 3d ago`. Nothing is shown while an
+  agent works, because the icon already says so. `done` and `idle` count as
+  one state, so looking at a finished agent keeps its finish time. An agent
+  first seen partway through a state shows the state without a time.
 - **Terminal title**, on a second line, only when it differs from the
   workspace name.
 
@@ -105,14 +106,17 @@ panes with `role` and `lead` tokens. Untagged agents keep the rows
 described above.
 
 ```
-● notes · lead · 3 workers, 1 blocked
+● notes
+   feat/bulk-edit · lead · 3 workers, 1 blocked
 ◐   bun-pins
-✓   wide-layout · #42 · done 14:02
-●   abc-migration · blocked 14:05
+✓   wide-layout · #42 · done 5m ago
+●   abc-migration · blocked just now
 ```
 
-- **Lead** (pane token `role=lead`): the workspace name, branch or PR, and
-  a count of its live workers, with how many are blocked.
+- **Lead** (pane token `role=lead`): the workspace name on the first line;
+  on the second, the branch or PR and a count of its live workers, with how
+  many are blocked. The name gets a line to itself because lead workspaces
+  often have long names.
 - **Worker** (`role=worker` and `lead=<lead pane id>`): one dimmed line
   with the worker's name indented under the lead, then branch or PR, then
   state time. The name is the herdr agent name, else the pane label, else
@@ -164,7 +168,15 @@ whitespace, so they survive and render as blank cells.
 
 herdr runs `agent-rows` on each hooked event. Every run sweeps all agents
 and ignores the event payload, so a missed event is corrected by the next
-one. A sweep:
+one.
+
+herdr has no timer for plugins, so a startup hook runs `agent-rows tick`,
+which stays alive and sweeps every 30 seconds. That keeps the relative
+times moving while no event fires. The ticker writes its pid to a
+`.ticker` file in the session's state directory. When a newer ticker
+writes its own pid there (a later server start, which may run a newer
+build), the old one exits at its next tick. It also exits once herdr's
+socket has been unreachable for 2 minutes. A sweep:
 
 1. asks herdr's socket API (`HERDR_SOCKET_PATH`) for one
    `session.snapshot`: agents with status, cwd, title and pane tokens,
@@ -210,15 +222,18 @@ works.
 - Reads: herdr's socket, and git metadata files under each agent's cwd.
 - Runs: `gh` and, for unusual layouts, `git`, both with fixed arguments.
   `gh` makes network calls to GitHub; the plugin itself does not.
-- Writes: pane tokens through the socket, and `state.json`, `.lock` and
-  `.last-sweep` (plus short-lived `state.json.tmp-<pid>` and
-  `.lock.stale-<pid>` files) in a `session-<id>` directory under
+- Writes: pane tokens through the socket, and `state.json`, `.lock`,
+  `.last-sweep` and `.ticker` (plus short-lived `state.json.tmp-<pid>`,
+  `.ticker.tmp-<pid>` and `.lock.stale-<pid>` files) in a `session-<id>` directory under
   `HERDR_PLUGIN_STATE_DIR`
   (`~/.local/state/herdr/plugins/io.rlew.agent-rows/` by default). The id
   is a hash of the session's socket path. Directories it creates are mode
   0700, and `state.json` is written with mode 0600. It holds terminal ids,
   state times, checkout paths, branch names and PR numbers. It is safe to
   delete; times then reappear after each agent's next state change.
+- Runs in the background: the ticker, from herdr's startup hook. It starts
+  when the herdr server starts, so after installing or updating the plugin,
+  times only move between events until the next server start.
 - Removes: once a day, other sessions' `session-<id>` directories in which
   nothing has changed for 30 days. A directory holding anything other than
   plain files is left alone, and symlinks are not followed.
@@ -229,15 +244,18 @@ works.
 | --- | --- | --- | --- |
 | `ar_name` | workspace | workspace | |
 | `ar_git` | branch or PR | branch or PR | |
-| `ar_state` | `done 14:02` | worker count | |
+| `ar_state` | `done 5m ago` | | |
 | `ar_title` | title, if not the workspace name | | |
+| `ar_lgit` | | branch or PR | |
+| `ar_lstate` | | worker count | |
 | `ar_wname` | | | `⠀⠀<name>` |
 | `ar_wgit` | | | branch or PR |
-| `ar_wstate` | | | `done 14:02` |
+| `ar_wstate` | | | `done 5m ago` |
 
 Workers get their own `ar_w*` tokens so the config can dim the whole row.
 Style rules only see a token's own value, so they can't tell a worker's
-branch from anyone else's.
+branch from anyone else's. Leads get their own `ar_l*` tokens for the same
+reason, so the config can put them on the second line.
 
 The plugin reads `role` and `lead` and never writes them.
 

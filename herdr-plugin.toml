@@ -1,6 +1,6 @@
 id = "io.rlew.agent-rows"
 name = "Agent Rows"
-description = "Compact Agent sidebar rows: de-duplicated titles, branch/PR, stamped state time, optional lead/worker grouping"
+description = "Compact Agent sidebar rows: de-duplicated titles, branch/PR, time since the state changed, optional lead/worker grouping"
 version = "0.2.0"
 min_herdr_version = "0.9.1"
 platforms = ["macos", "linux"]
@@ -10,6 +10,11 @@ platforms = ["macos", "linux"]
 [[build]]
 platforms = ["linux", "macos"]
 command = ["go", "build", "-o", "agent-rows", "./cmd/agent-rows"]
+
+# Stays alive and sweeps every 30 s so "done 5m ago" keeps moving. The
+# newest instance wins; it exits once herdr's socket is gone.
+[[startup]]
+command = ["./agent-rows", "tick"]
 
 [[events]]
 on = "pane.agent_detected"         # session (re)appears — also after a restart

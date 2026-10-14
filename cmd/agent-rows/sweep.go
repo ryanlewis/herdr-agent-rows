@@ -19,8 +19,9 @@ import (
 // `role` and `lead` are optional read-only inputs, set by whatever groups
 // agents under a lead.
 // Workers get their own ar_w* tokens so the config can mute their whole row
-// (style rules only see a token's own value).
-var tokenNames = []string{"ar_name", "ar_git", "ar_state", "ar_title", "ar_wname", "ar_wgit", "ar_wstate"}
+// (style rules only see a token's own value); leads get ar_l* tokens so the
+// config can put their branch and roll-up on a second line.
+var tokenNames = []string{"ar_name", "ar_git", "ar_state", "ar_title", "ar_lgit", "ar_lstate", "ar_wname", "ar_wgit", "ar_wstate"}
 
 // workerIndent sets a worker's name in from the state icon. herdr trims
 // leading whitespace from token values; U+2800 (braille blank) is not
@@ -115,15 +116,30 @@ func stateClass(status string) string {
 	return "unknown"
 }
 
-// `done 14:02`, `blocked 14:05`; nothing while working (the icon says it).
-func stateText(status string, st *stamp) string {
+// `done 5m ago`, `blocked just now`; nothing while working (the icon says it).
+func stateText(status string, st *stamp, now int64) string {
 	if status != "done" && status != "idle" && status != "blocked" {
 		return ""
 	}
 	if st != nil && st.Seen {
-		return status + " " + time.UnixMilli(st.Since).Format("15:04")
+		return status + " " + ago(st.Since, now)
 	}
 	return status
+}
+
+// ago renders the time since a stamp in whole units: `just now` under a
+// minute (or when the clock went back), then minutes, hours, days.
+func ago(since, now int64) string {
+	d := time.Duration(now-since) * time.Millisecond
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", d/time.Minute)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", d/time.Hour)
+	}
+	return fmt.Sprintf("%dd ago", d/(24*time.Hour))
 }
 
 func rollup(workers []agentInfo) string {
@@ -164,6 +180,7 @@ type rowCtx struct {
 	paneLabel map[string]string
 	stamps    map[string]*stamp
 	git       map[string]string
+	now       int64 // unix ms, for relative state times
 }
 
 // computeRows returns the tokens each agent should carry, by pane id.
@@ -192,19 +209,21 @@ func computeRows(agents []agentInfo, ctx rowCtx) map[string]map[string]string {
 		var want map[string]string
 		switch {
 		case a.Tokens["role"] == "lead":
-			want = map[string]string{"ar_name": ws, "ar_git": git, "ar_state": rollup(workersOf[a.PaneID])}
+			// A lead's branch and roll-up go on their own tokens, so the
+			// config can put them on a second line under a long name.
+			want = map[string]string{"ar_name": ws, "ar_lgit": git, "ar_lstate": rollup(workersOf[a.PaneID])}
 		case isWorker(a):
 			// Worker name: herdr agent name (set by `agent start --name`), else
 			// the pane label, else the title. Pane labels can be rewritten by
 			// other plugins; the agent name only changes on an explicit rename.
 			name := firstNonEmpty(a.Name, ctx.paneLabel[a.PaneID], a.TerminalTitleStripped, a.PaneID)
-			want = map[string]string{"ar_wname": workerIndent + name, "ar_wgit": git, "ar_wstate": stateText(a.AgentStatus, st)}
+			want = map[string]string{"ar_wname": workerIndent + name, "ar_wgit": git, "ar_wstate": stateText(a.AgentStatus, st, ctx.now)}
 		default:
 			title := a.TerminalTitleStripped
 			if sameText(title, ws) {
 				title = ""
 			}
-			want = map[string]string{"ar_name": ws, "ar_git": git, "ar_state": stateText(a.AgentStatus, st), "ar_title": title}
+			want = map[string]string{"ar_name": ws, "ar_git": git, "ar_state": stateText(a.AgentStatus, st, ctx.now), "ar_title": title}
 		}
 		for k, v := range want {
 			want[k] = norm(v)
@@ -380,7 +399,7 @@ func sweep(c *config) error {
 			paneLabel[p.PaneID] = p.Label
 		}
 	}
-	rows := computeRows(live, rowCtx{wsLabel: wsLabel, paneLabel: paneLabel, stamps: stamps, git: gitLabel})
+	rows := computeRows(live, rowCtx{wsLabel: wsLabel, paneLabel: paneLabel, stamps: stamps, git: gitLabel, now: now})
 
 	if dirty {
 		writeState(c, st)

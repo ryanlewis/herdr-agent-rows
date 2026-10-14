@@ -1,9 +1,10 @@
 // Agent Rows — compute per-pane sidebar tokens so herdr's Agent panel shows
-// de-duplicated titles, branch/PR and a stamped state time, and optionally
-// groups workers under a lead when panes carry role/lead tokens.
+// de-duplicated titles, branch/PR and how long ago the state changed, and
+// optionally groups workers under a lead when panes carry role/lead tokens.
 //
 // Global idempotent reconcile: every invocation sweeps all agents (event
-// payload ignored), so a missed event self-heals on the next one.
+// payload ignored), so a missed event self-heals on the next one. `tick`,
+// run by the startup hook, also sweeps on a timer so relative times move.
 //
 // Fail-safe posture: any parse/shape surprise → skip + one line to stderr.
 // A stale row is acceptable; a broken sweep or a hung gh is not.
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,7 +39,13 @@ const (
 	// most once per pruneEvery.
 	sessionIdle = 30 * 24 * time.Hour
 	pruneEvery  = 24 * time.Hour
+	// The ticker sweeps every tickEvery, and exits once herdr's socket has
+	// been unreachable for tickGiveUp.
+	tickGiveUp = 2 * time.Minute
 )
+
+// A var so tests can shorten it.
+var tickEvery = 30 * time.Second
 
 // A waiting event must outlast a sweep that is running gh (ghTimeout plus
 // the 1 s WaitDelay), or it gives up while that sweep is still going. A var
@@ -71,7 +79,56 @@ func main() {
 		}
 		stateDir = filepath.Join(base, "herdr", "plugins", metadataSource)
 	}
-	run(&config{dry: dry, socket: socketPath(), stateDir: stateDir, gh: "gh", stdout: os.Stdout, stderr: os.Stderr})
+	c := &config{dry: dry, socket: socketPath(), stateDir: stateDir, gh: "gh", stdout: os.Stdout, stderr: os.Stderr}
+	if len(os.Args) > 1 && os.Args[1] == "tick" {
+		tick(c)
+		return
+	}
+	run(c)
+}
+
+// tick is the startup hook: it stays alive and sweeps every tickEvery, so
+// the relative times in the rows keep moving while no event fires. Newest
+// wins: it writes its pid to the session's .ticker file and exits once that
+// file names another process (a later server's startup hook, which may run
+// a newer build), or once herdr's socket has been unreachable for
+// tickGiveUp.
+func tick(c *config) {
+	if c.stateDir == "" || c.dry {
+		c.warn("tick needs HERDR_PLUGIN_STATE_DIR (run it from herdr's startup hook)")
+		return
+	}
+	dir := filepath.Join(c.stateDir, sessionDir(c.socket))
+	claim := filepath.Join(dir, ".ticker")
+	pid := strconv.Itoa(os.Getpid())
+	claimIt := func() {
+		tmp := claim + ".tmp-" + pid
+		if os.MkdirAll(dir, 0o700) == nil && os.WriteFile(tmp, []byte(pid), 0o600) == nil {
+			_ = os.Rename(tmp, claim)
+		}
+	}
+	claimIt()
+	var lastSeen time.Time
+	for {
+		// A missing claim (state dir deleted) is taken again; another pid's
+		// claim means this ticker has been replaced.
+		switch b, err := os.ReadFile(claim); {
+		case errors.Is(err, fs.ErrNotExist):
+			claimIt()
+		case err == nil && string(b) != pid:
+			return
+		}
+		if conn, err := net.DialTimeout("unix", c.socket, 2*time.Second); err == nil {
+			conn.Close()
+			lastSeen = time.Now()
+			cc := *c // run narrows stateDir in place
+			run(&cc)
+		} else if lastSeen.IsZero() || time.Since(lastSeen) > tickGiveUp {
+			c.warn("herdr socket unreachable; ticker exiting: %v", err)
+			return
+		}
+		time.Sleep(tickEvery)
+	}
 }
 
 // run is the entrypoint minus process setup, so tests can drive it.

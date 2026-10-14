@@ -295,7 +295,7 @@ func repo(t *testing.T, root, name, branch, def string) string {
 	return dir
 }
 
-var hhmm = regexp.MustCompile(`^(done|idle|blocked) \d\d:\d\d$`)
+var stamped = regexp.MustCompile(`^(done|idle|blocked) (just now|\d+[mhd] ago)$`)
 
 // ---- scenarios -------------------------------------------------------------------
 
@@ -331,7 +331,7 @@ func TestStampAndDoneToIdleKeepsTime(t *testing.T) {
 	w.Agents[0]["agent_status"] = "done"
 	r2 := sb.run(w, runOpts{})
 	done := byPane(r2.reports)["w1:p1"].set["ar_state"]
-	if !hhmm.MatchString(done) || !strings.HasPrefix(done, "done ") {
+	if !stamped.MatchString(done) || !strings.HasPrefix(done, "done ") {
 		t.Fatalf("ar_state = %q (%s)", done, r2.stderr)
 	}
 	apply(w, r2.reports)
@@ -339,6 +339,44 @@ func TestStampAndDoneToIdleKeepsTime(t *testing.T) {
 	r3 := sb.run(w, runOpts{})
 	if got := byPane(r3.reports)["w1:p1"].set["ar_state"]; got != strings.Replace(done, "done", "idle", 1) {
 		t.Errorf("idle ar_state = %q, want time kept from %q", got, done)
+	}
+}
+
+func TestAgo(t *testing.T) {
+	const min = int64(time.Minute / time.Millisecond)
+	for _, c := range []struct {
+		d    int64
+		want string
+	}{
+		{-5 * min, "just now"}, {0, "just now"}, {min - 1, "just now"}, {min, "1m ago"},
+		{59 * min, "59m ago"}, {60 * min, "1h ago"}, {23*60*min + 59*min, "23h ago"},
+		{24 * 60 * min, "1d ago"}, {3 * 24 * 60 * min, "3d ago"},
+	} {
+		if got := ago(1_000_000_000, 1_000_000_000+c.d); got != c.want {
+			t.Errorf("ago(+%dms) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+// A stamp's text ages between sweeps with no state change.
+func TestStateTimeAges(t *testing.T) {
+	sb := newSandbox(t)
+	w := &world{Agents: []map[string]any{agent("w1:p1", "w1", map[string]any{"agent_status": "working"})}, Workspaces: []map[string]any{ws("w1", "notes")}}
+	apply(w, sb.run(w, runOpts{}).reports)
+	w.Agents[0]["agent_status"] = "done"
+	apply(w, sb.run(w, runOpts{}).reports)
+	b, _ := os.ReadFile(filepath.Join(sb.stateDir, "state.json"))
+	var st state
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range st.Stamps {
+		s.Since -= int64(5 * time.Minute / time.Millisecond)
+	}
+	b, _ = json.Marshal(st)
+	os.WriteFile(filepath.Join(sb.stateDir, "state.json"), b, 0o600)
+	if got := byPane(sb.run(w, runOpts{}).reports)["w1:p1"].set["ar_state"]; got != "done 5m ago" {
+		t.Errorf("ar_state = %q, want done 5m ago", got)
 	}
 }
 
@@ -379,7 +417,7 @@ func TestLeadAndWorkers(t *testing.T) {
 		Panes:      []map[string]any{{"pane_id": "w1:p3", "label": "abc-migration"}},
 	}, runOpts{})
 	m := byPane(r.reports)
-	eqSet(t, m["w1:p1"], map[string]string{"ar_name": "notes", "ar_state": "lead · 3 workers, 1 blocked"}, "lead")
+	eqSet(t, m["w1:p1"], map[string]string{"ar_name": "notes", "ar_lstate": "lead · 3 workers, 1 blocked"}, "lead")
 	eqSet(t, m["w1:p2"], map[string]string{"ar_wname": workerIndent + "wide-layout", "ar_wstate": "done"}, "agent name")
 	eqSet(t, m["w1:p3"], map[string]string{"ar_wname": workerIndent + "abc-migration", "ar_wstate": "blocked"}, "pane label fallback")
 	eqSet(t, m["w1:p4"], map[string]string{"ar_wname": workerIndent + "t"}, "title fallback; working has no state text")
@@ -396,10 +434,10 @@ func TestLeadCounts(t *testing.T) {
 		Workspaces: []map[string]any{ws("w1", "one"), ws("w2", "two")},
 	}, runOpts{})
 	m := byPane(r.reports)
-	if got := m["w1:p1"].set["ar_state"]; got != "lead · 1 worker" {
+	if got := m["w1:p1"].set["ar_lstate"]; got != "lead · 1 worker" {
 		t.Errorf("one worker: %q", got)
 	}
-	if got := m["w2:p1"].set["ar_state"]; got != "lead" {
+	if got := m["w2:p1"].set["ar_lstate"]; got != "lead" {
 		t.Errorf("no workers: %q", got)
 	}
 }
@@ -843,7 +881,7 @@ func TestDryRun(t *testing.T) {
 	if len(r.reports) != 0 {
 		t.Errorf("reports = %v", r.reports)
 	}
-	if !regexp.MustCompile(`(?m)^w1:p1 ar_name="a" ar_git=- ar_state="idle" ar_title=- ar_wname=- ar_wgit=- ar_wstate=-$`).MatchString(r.stdout) {
+	if !regexp.MustCompile(`(?m)^w1:p1 ar_name="a" ar_git=- ar_state="idle" ar_title=- ar_lgit=- ar_lstate=- ar_wname=- ar_wgit=- ar_wstate=-$`).MatchString(r.stdout) {
 		t.Errorf("stdout = %q", r.stdout)
 	}
 }
@@ -1118,5 +1156,55 @@ func TestManifestHooksPaneRemoval(t *testing.T) {
 		if !slices.Contains(hooked, ev) {
 			t.Errorf("herdr-plugin.toml does not hook %s (hooks %v)", ev, hooked)
 		}
+	}
+}
+
+// The ticker sweeps on its own, gives way to a newer ticker, and exits once
+// herdr's socket is gone.
+func TestTicker(t *testing.T) {
+	sb := newSandbox(t)
+	sb.mu.Lock()
+	sb.world = &world{Agents: []map[string]any{agent("w1:p1", "w1", nil)}, Workspaces: []map[string]any{ws("w1", "notes")}}
+	sb.mu.Unlock()
+	defer func(d time.Duration) { tickEvery = d }(tickEvery)
+	tickEvery = 20 * time.Millisecond
+	var stderr bytes.Buffer
+	c := &config{socket: sb.sock, stateDir: sb.base, gh: "false", stdout: &bytes.Buffer{}, stderr: &stderr}
+	done := make(chan struct{})
+	go func() { tick(c); close(done) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		sb.mu.Lock()
+		n := len(sb.reports)
+		sb.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ticker never swept (%s)", stderr.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	claim := filepath.Join(sb.stateDir, ".ticker")
+	if b, _ := os.ReadFile(claim); string(b) != fmt.Sprint(os.Getpid()) {
+		t.Fatalf(".ticker = %q", b)
+	}
+	os.WriteFile(claim, []byte("1"), 0o600) // a newer ticker took over
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ticker kept running after being replaced")
+	}
+
+	// Socket unreachable from the start: exit at once.
+	os.Remove(claim)
+	c2 := &config{socket: filepath.Join(sb.dir, "gone.sock"), stateDir: sb.base, gh: "false", stdout: &bytes.Buffer{}, stderr: &stderr}
+	done2 := make(chan struct{})
+	go func() { tick(c2); close(done2) }()
+	select {
+	case <-done2:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ticker kept running without a socket")
 	}
 }
