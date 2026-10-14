@@ -6,9 +6,9 @@ working on, and how long ago its state last changed. A second line shows the
 terminal title, but only when it differs from the workspace name.
 
 ```
-● api · feat/rate-limit · idle 12m ago
+● api · feat/rate-limit · idle 12m
    Add rate limiting to the login endpoint
-✓ notes · done 5m ago
+✓ notes · done 5m
 ◐ web · #42
 ```
 
@@ -90,8 +90,8 @@ Each agent's row shows:
 - **Branch or PR**, only when the checkout is off its default branch
   (`origin/HEAD`, else `main` or `master`). If the branch has a PR, the PR
   replaces the branch name: `#42`, `#42 merged`, `#42 closed`.
-- **State time**, how long ago the state changed: `done just now`,
-  `blocked 5m ago`, `idle 2h ago`, `idle 3d ago`. Nothing is shown while an
+- **State time**, how long ago the state changed: `done now`,
+  `blocked 5m`, `idle 2h`, `idle 3d`. Nothing is shown while an
   agent works, because the icon already says so. `done` and `idle` count as
   one state, so looking at a finished agent keeps its finish time. An agent
   first seen partway through a state shows the state without a time.
@@ -119,11 +119,10 @@ described above.
   often have long names.
 - **Worker** (`role=worker` and `lead=<lead pane id>`): one dimmed line
   with the worker's name indented under the lead, then branch or PR, then
-  state time without "ago" (`done 5m`, `blocked now`), to save space. The
-  name is the herdr agent name, else the pane label, else the terminal
-  title, else the pane id. Workers are named rather than shown by
-  workspace, because workers in one workspace would otherwise all show the
-  same name.
+  state time. The name is the herdr agent name, else the pane label, else
+  the terminal title, else the pane id. Workers are named rather than
+  shown by workspace, because workers in one workspace would otherwise all
+  show the same name.
 - A worker whose lead pane is gone, no longer runs an agent, or is no
   longer tagged `role=lead` goes back to an ordinary row.
 
@@ -245,7 +244,7 @@ works.
 | --- | --- | --- | --- |
 | `ar_name` | workspace | workspace | |
 | `ar_git` | branch or PR | branch or PR | |
-| `ar_state` | `done 5m ago` | | |
+| `ar_state` | `done 5m` | | |
 | `ar_title` | title, if not the workspace name | | |
 | `ar_lgit` | | branch or PR | |
 | `ar_lstate` | | worker count | |
