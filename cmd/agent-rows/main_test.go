@@ -356,6 +356,19 @@ func TestAgo(t *testing.T) {
 			t.Errorf("ago(+%dms) = %q, want %q", c.d, got, c.want)
 		}
 	}
+	st := &stamp{Since: 0, Seen: true}
+	for _, c := range []struct {
+		now   int64
+		short bool
+		want  string
+	}{
+		{0, false, "done just now"}, {0, true, "done now"},
+		{5 * min, false, "done 5m ago"}, {5 * min, true, "done 5m"},
+	} {
+		if got := stateText("done", st, c.now, c.short); got != c.want {
+			t.Errorf("stateText(+%dms, short=%v) = %q, want %q", c.now, c.short, got, c.want)
+		}
+	}
 }
 
 // A stamp's text ages between sweeps with no state change.

@@ -109,8 +109,8 @@ described above.
 ● notes
    feat/bulk-edit · lead · 3 workers, 1 blocked
 ◐   bun-pins
-✓   wide-layout · #42 · done 5m ago
-●   abc-migration · blocked just now
+✓   wide-layout · #42 · done 5m
+●   abc-migration · blocked now
 ```
 
 - **Lead** (pane token `role=lead`): the workspace name on the first line;
@@ -119,10 +119,11 @@ described above.
   often have long names.
 - **Worker** (`role=worker` and `lead=<lead pane id>`): one dimmed line
   with the worker's name indented under the lead, then branch or PR, then
-  state time. The name is the herdr agent name, else the pane label, else
-  the terminal title, else the pane id. Workers are named rather than
-  shown by workspace, because workers in one workspace would otherwise all
-  show the same name.
+  state time without "ago" (`done 5m`, `blocked now`), to save space. The
+  name is the herdr agent name, else the pane label, else the terminal
+  title, else the pane id. Workers are named rather than shown by
+  workspace, because workers in one workspace would otherwise all show the
+  same name.
 - A worker whose lead pane is gone, no longer runs an agent, or is no
   longer tagged `role=lead` goes back to an ordinary row.
 
@@ -250,7 +251,7 @@ works.
 | `ar_lstate` | | worker count | |
 | `ar_wname` | | | `⠀⠀<name>` |
 | `ar_wgit` | | | branch or PR |
-| `ar_wstate` | | | `done 5m ago` |
+| `ar_wstate` | | | `done 5m` |
 
 Workers get their own `ar_w*` tokens so the config can dim the whole row.
 Style rules only see a token's own value, so they can't tell a worker's
