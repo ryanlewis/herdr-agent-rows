@@ -295,7 +295,7 @@ func repo(t *testing.T, root, name, branch, def string) string {
 	return dir
 }
 
-var stamped = regexp.MustCompile(`^(done|idle|blocked) (just now|\d+[mhd] ago)$`)
+var stamped = regexp.MustCompile(`^(done|idle|blocked) (now|\d+[mhd])$`)
 
 // ---- scenarios -------------------------------------------------------------------
 
@@ -348,25 +348,12 @@ func TestAgo(t *testing.T) {
 		d    int64
 		want string
 	}{
-		{-5 * min, "just now"}, {0, "just now"}, {min - 1, "just now"}, {min, "1m ago"},
-		{59 * min, "59m ago"}, {60 * min, "1h ago"}, {23*60*min + 59*min, "23h ago"},
-		{24 * 60 * min, "1d ago"}, {3 * 24 * 60 * min, "3d ago"},
+		{-5 * min, "now"}, {0, "now"}, {min - 1, "now"}, {min, "1m"},
+		{59 * min, "59m"}, {60 * min, "1h"}, {23*60*min + 59*min, "23h"},
+		{24 * 60 * min, "1d"}, {3 * 24 * 60 * min, "3d"},
 	} {
 		if got := ago(1_000_000_000, 1_000_000_000+c.d); got != c.want {
 			t.Errorf("ago(+%dms) = %q, want %q", c.d, got, c.want)
-		}
-	}
-	st := &stamp{Since: 0, Seen: true}
-	for _, c := range []struct {
-		now   int64
-		short bool
-		want  string
-	}{
-		{0, false, "done just now"}, {0, true, "done now"},
-		{5 * min, false, "done 5m ago"}, {5 * min, true, "done 5m"},
-	} {
-		if got := stateText("done", st, c.now, c.short); got != c.want {
-			t.Errorf("stateText(+%dms, short=%v) = %q, want %q", c.now, c.short, got, c.want)
 		}
 	}
 }
@@ -388,8 +375,8 @@ func TestStateTimeAges(t *testing.T) {
 	}
 	b, _ = json.Marshal(st)
 	os.WriteFile(filepath.Join(sb.stateDir, "state.json"), b, 0o600)
-	if got := byPane(sb.run(w, runOpts{}).reports)["w1:p1"].set["ar_state"]; got != "done 5m ago" {
-		t.Errorf("ar_state = %q, want done 5m ago", got)
+	if got := byPane(sb.run(w, runOpts{}).reports)["w1:p1"].set["ar_state"]; got != "done 5m" {
+		t.Errorf("ar_state = %q, want done 5m", got)
 	}
 }
 

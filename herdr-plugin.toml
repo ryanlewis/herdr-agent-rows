@@ -11,7 +11,7 @@ platforms = ["macos", "linux"]
 platforms = ["linux", "macos"]
 command = ["go", "build", "-o", "agent-rows", "./cmd/agent-rows"]
 
-# Stays alive and sweeps every 30 s so "done 5m ago" keeps moving. The
+# Stays alive and sweeps every 30 s so "done 5m" keeps moving. The
 # newest instance wins; it exits once herdr's socket is gone.
 [[startup]]
 command = ["./agent-rows", "tick"]
