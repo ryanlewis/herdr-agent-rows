@@ -117,14 +117,23 @@ func stateClass(status string) string {
 }
 
 // `done 5m ago`, `blocked just now`; nothing while working (the icon says it).
-func stateText(status string, st *stamp, now int64) string {
+// short drops "ago" (`done 5m`, `blocked now`) for worker rows, which share
+// their line with an indented name.
+func stateText(status string, st *stamp, now int64, short bool) string {
 	if status != "done" && status != "idle" && status != "blocked" {
 		return ""
 	}
-	if st != nil && st.Seen {
-		return status + " " + ago(st.Since, now)
+	if st == nil || !st.Seen {
+		return status
 	}
-	return status
+	t := ago(st.Since, now)
+	if short {
+		t = strings.TrimSuffix(t, " ago")
+		if t == "just now" {
+			t = "now"
+		}
+	}
+	return status + " " + t
 }
 
 // ago renders the time since a stamp in whole units: `just now` under a
@@ -217,13 +226,13 @@ func computeRows(agents []agentInfo, ctx rowCtx) map[string]map[string]string {
 			// the pane label, else the title. Pane labels can be rewritten by
 			// other plugins; the agent name only changes on an explicit rename.
 			name := firstNonEmpty(a.Name, ctx.paneLabel[a.PaneID], a.TerminalTitleStripped, a.PaneID)
-			want = map[string]string{"ar_wname": workerIndent + name, "ar_wgit": git, "ar_wstate": stateText(a.AgentStatus, st, ctx.now)}
+			want = map[string]string{"ar_wname": workerIndent + name, "ar_wgit": git, "ar_wstate": stateText(a.AgentStatus, st, ctx.now, true)}
 		default:
 			title := a.TerminalTitleStripped
 			if sameText(title, ws) {
 				title = ""
 			}
-			want = map[string]string{"ar_name": ws, "ar_git": git, "ar_state": stateText(a.AgentStatus, st, ctx.now), "ar_title": title}
+			want = map[string]string{"ar_name": ws, "ar_git": git, "ar_state": stateText(a.AgentStatus, st, ctx.now, false), "ar_title": title}
 		}
 		for k, v := range want {
 			want[k] = norm(v)
